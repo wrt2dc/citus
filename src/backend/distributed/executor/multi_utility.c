@@ -1538,7 +1538,7 @@ ErrorIfUnsupportedIndexStmt(IndexStmt *createIndexStatement)
 		/* caller uses ShareLock for non-concurrent indexes, use the same lock here */
 		LOCKMODE lockMode = ShareLock;
 		Oid relationId = RangeVarGetRelid(relation, lockMode, missingOk);
-		Var *partitionKey = PartitionKey(relationId);
+		Var *partitionKey = DistPartitionKey(relationId);
 		char partitionMethod = PartitionMethod(relationId);
 		List *indexParameterList = NIL;
 		ListCell *indexParameterCell = NULL;
@@ -1685,7 +1685,7 @@ ErrorIfUnsupportedAlterTableStmt(AlterTableStmt *alterTableStatement)
 					continue;
 				}
 
-				partitionColumn = PartitionKey(relationId);
+				partitionColumn = DistPartitionKey(relationId);
 
 				tuple = SearchSysCacheAttName(relationId, alterColumnName);
 				if (HeapTupleIsValid(tuple))
@@ -1769,7 +1769,7 @@ ErrorIfUnsupportedAlterAddConstraintStmt(AlterTableStmt *alterTableStatement)
 	LOCKMODE lockmode = AlterTableGetLockLevel(alterTableStatement->cmds);
 	Oid relationId = AlterTableLookupRelation(alterTableStatement, lockmode);
 	char distributionMethod = PartitionMethod(relationId);
-	Var *distributionColumn = PartitionKey(relationId);
+	Var *distributionColumn = DistPartitionKey(relationId);
 	uint32 colocationId = TableColocationId(relationId);
 	Relation relation = relation_open(relationId, ExclusiveLock);
 
@@ -2042,7 +2042,7 @@ ErrorIfUnsupportedForeignConstraint(Relation relation, char distributionMethod,
 			 * Partition column must exist in both referencing and referenced side of the
 			 * foreign key constraint. They also must be in same ordinal.
 			 */
-			referencedTablePartitionColumn = PartitionKey(referencedTableId);
+			referencedTablePartitionColumn = DistPartitionKey(referencedTableId);
 		}
 		else
 		{
