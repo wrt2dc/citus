@@ -2225,6 +2225,7 @@ ErrorIfDistributedAlterSeqOwnedBy(AlterSeqStmt *alterSeqStmt)
 {
 	Oid sequenceId = RangeVarGetRelid(alterSeqStmt->sequence, AccessShareLock,
 									  alterSeqStmt->missing_ok);
+	bool sequenceOwned = false;
 	Oid ownedByTableId = InvalidOid;
 	Oid newOwnedByTableId = InvalidOid;
 	int32 ownedByColumnId = 0;
@@ -2236,8 +2237,15 @@ ErrorIfDistributedAlterSeqOwnedBy(AlterSeqStmt *alterSeqStmt)
 		return;
 	}
 
-	/* see whether the sequences is already owned by a distributed table */
-	if (sequenceIsOwned(sequenceId, &ownedByTableId, &ownedByColumnId))
+#if (PG_VERSION_NUM >= 100000)
+	sequenceOwned = sequenceIsOwned(sequenceId, DEPENDENCY_AUTO, &ownedByTableId,
+									&ownedByColumnId);
+#else
+	sequenceOwned = sequenceIsOwned(sequenceId, &ownedByTableId, &ownedByColumnId);
+#endif
+
+	/* see whether the sequence is already owned by a distributed table */
+	if (sequenceOwned)
 	{
 		hasDistributedOwner = IsDistributedTable(ownedByTableId);
 	}
