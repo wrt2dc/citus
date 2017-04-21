@@ -7,7 +7,7 @@ SHOW server_version \gset
 SELECT substring(:'server_version', '\d+(?:\.\d+)?') AS major_version;
  major_version 
 ---------------
- 9.6
+ 10
 (1 row)
 
 -- Create tables for subquery tests
