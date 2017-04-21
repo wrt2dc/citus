@@ -7,7 +7,7 @@ SHOW server_version \gset
 SELECT substring(:'server_version', '\d+(?:\.\d+)?') AS major_version;
  major_version 
 ---------------
- 9.6
+ 9.5
 (1 row)
 
 -- Create tables for subquery tests
@@ -1194,8 +1194,8 @@ FROM
 	GROUP BY
 		tenant_id,
 		user_id) AS subquery;
-                                                          QUERY PLAN                                                          
-------------------------------------------------------------------------------------------------------------------------------
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
  Aggregate
    ->  Custom Scan (Citus Real-Time)
          Task Count: 4
@@ -1204,17 +1204,12 @@ FROM
                Node: host=localhost port=57637 dbname=regression
                ->  Aggregate
                      ->  GroupAggregate
-                           Group Key: (((NULL::user_composite_type)).tenant_id), (((NULL::user_composite_type)).user_id)
+                           Group Key: ((users.composite_id).tenant_id), ((users.composite_id).user_id)
                            ->  Sort
-                                 Sort Key: (((NULL::user_composite_type)).tenant_id), (((NULL::user_composite_type)).user_id)
-                                 ->  Hash Join
-                                       Hash Cond: ((NULL::user_composite_type) = events.composite_id)
-                                       ->  Result
-                                             One-Time Filter: false
-                                       ->  Hash
-                                             ->  Seq Scan on events_270011 events
-                                                   Filter: ((event_type)::text = ANY ('{click,submit,pay}'::text[]))
-(18 rows)
+                                 Sort Key: ((users.composite_id).tenant_id), ((users.composite_id).user_id)
+                                 ->  Result
+                                       One-Time Filter: false
+(13 rows)
 
 -- Union and left join subquery pushdown
 EXPLAIN (COSTS OFF)
@@ -1279,8 +1274,8 @@ FROM
 		hasdone) AS subquery_top
 GROUP BY
 	hasdone;
-                                                                                                                         QUERY PLAN                                                                                                                          
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                   QUERY PLAN                                                                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
    Group Key: remote_scan.hasdone
    ->  Custom Scan (Citus Real-Time)
@@ -1288,41 +1283,30 @@ GROUP BY
          Tasks Shown: One of 4
          ->  Task
                Node: host=localhost port=57637 dbname=regression
-               ->  GroupAggregate
-                     Group Key: subquery_top.hasdone
-                     ->  Sort
-                           Sort Key: subquery_top.hasdone
-                           ->  Subquery Scan on subquery_top
-                                 ->  GroupAggregate
-                                       Group Key: subquery_1.tenant_id, subquery_1.user_id, ('Has done paying'::text)
-                                       ->  Sort
-                                             Sort Key: subquery_1.tenant_id, subquery_1.user_id, ('Has done paying'::text)
-                                             ->  Hash Right Join
-                                                   Hash Cond: (events.composite_id = subquery_1.composite_id)
+               ->  HashAggregate
+                     Group Key: COALESCE(('Has done paying'::text), 'Has not done paying'::text)
+                     ->  GroupAggregate
+                           Group Key: subquery_1.tenant_id, subquery_1.user_id, ('Has done paying'::text)
+                           ->  Sort
+                                 Sort Key: subquery_1.tenant_id, subquery_1.user_id, ('Has done paying'::text)
+                                 ->  Hash Right Join
+                                       Hash Cond: (events.composite_id = subquery_1.composite_id)
+                                       ->  Unique
+                                             ->  Sort
+                                                   Sort Key: ((events.composite_id).tenant_id), ((events.composite_id).user_id)
+                                                   ->  Seq Scan on events_270011 events
+                                                         Filter: (((event_type)::text = 'pay'::text) AND (composite_id >= '(1,-9223372036854775808)'::user_composite_type) AND (composite_id <= '(1,9223372036854775807)'::user_composite_type))
+                                       ->  Hash
+                                             ->  Subquery Scan on subquery_1
                                                    ->  Unique
                                                          ->  Sort
-                                                               Sort Key: ((events.composite_id).tenant_id), ((events.composite_id).user_id)
-                                                               ->  Seq Scan on events_270011 events
-                                                                     Filter: (((event_type)::text = 'pay'::text) AND (composite_id >= '(1,-9223372036854775808)'::user_composite_type) AND (composite_id <= '(1,9223372036854775807)'::user_composite_type))
-                                                   ->  Hash
-                                                         ->  Subquery Scan on subquery_1
-                                                               ->  Unique
-                                                                     ->  Sort
-                                                                           Sort Key: (((NULL::user_composite_type)).tenant_id), (((NULL::user_composite_type)).user_id), (NULL::user_composite_type), ('action=>1'::text), events_1.event_time
-                                                                           ->  Append
-                                                                                 ->  Nested Loop
-                                                                                       Join Filter: ((NULL::user_composite_type) = events_1.composite_id)
-                                                                                       ->  Result
-                                                                                             One-Time Filter: false
-                                                                                       ->  Seq Scan on events_270011 events_1
-                                                                                             Filter: ((event_type)::text = 'click'::text)
-                                                                                 ->  Nested Loop
-                                                                                       Join Filter: ((NULL::user_composite_type) = events_2.composite_id)
-                                                                                       ->  Result
-                                                                                             One-Time Filter: false
-                                                                                       ->  Seq Scan on events_270011 events_2
-                                                                                             Filter: ((event_type)::text = 'submit'::text)
-(41 rows)
+                                                               Sort Key: ((composite_id).tenant_id), ((composite_id).user_id), composite_id, ('action=>1'::text), event_time
+                                                               ->  Append
+                                                                     ->  Result
+                                                                           One-Time Filter: false
+                                                                     ->  Result
+                                                                           One-Time Filter: false
+(30 rows)
 
 -- Union, left join and having subquery pushdown
 EXPLAIN (COSTS OFF)
@@ -1449,8 +1433,8 @@ ORDER BY
 	user_lastseen DESC
 LIMIT
 	10;
-                                                       QUERY PLAN                                                       
-------------------------------------------------------------------------------------------------------------------------
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
  Limit
    ->  Sort
          Sort Key: remote_scan.user_lastseen DESC
@@ -1461,24 +1445,23 @@ LIMIT
                      Node: host=localhost port=57637 dbname=regression
                      ->  Limit
                            ->  Sort
-                                 Sort Key: (max(users.lastseen)) DESC
+                                 Sort Key: (max(lastseen)) DESC
                                  ->  GroupAggregate
-                                       Group Key: ((users.composite_id).tenant_id), ((users.composite_id).user_id)
+                                       Group Key: ((composite_id).tenant_id), ((composite_id).user_id)
                                        ->  Sort
-                                             Sort Key: ((users.composite_id).tenant_id), ((users.composite_id).user_id)
+                                             Sort Key: ((composite_id).tenant_id), ((composite_id).user_id)
                                              ->  Nested Loop Left Join
                                                    ->  Limit
                                                          ->  Sort
-                                                               Sort Key: users.lastseen DESC
-                                                               ->  Subquery Scan on users
-                                                                     ->  Result
-                                                                           One-Time Filter: false
+                                                               Sort Key: lastseen DESC
+                                                               ->  Result
+                                                                     One-Time Filter: false
                                                    ->  Limit
                                                          ->  Sort
                                                                Sort Key: events.event_time DESC
                                                                ->  Seq Scan on events_270011 events
-                                                                     Filter: (composite_id = users.composite_id)
-(27 rows)
+                                                                     Filter: (composite_id = composite_id)
+(26 rows)
 
 SET citus.subquery_pushdown to OFF;
 SET citus.enable_router_execution TO 'true';
