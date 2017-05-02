@@ -13,6 +13,14 @@ env:
     - PGVERSION=9.6
     - PGVERSION=10
 before_install:
+  # add support_postgresql10 and master branches and fetch histories
+  - git remote set-branches origin support_postgresql10 master
+  - git fetch
+  # create new branch based on support_postgresql10 and merge master to it
+  - git checkout -b nightly-build origin/support_postgresql10
+  - "echo \"support_postgresql10: $(git rev-parse origin/support_postgresql10)\""
+  - "echo \"              master: $(git rev-parse origin/master)\""
+  - git merge --no-ff -m 'Nightly pg10/master merge build' origin/master
   - git clone -b pg10_hack --depth 1 https://github.com/citusdata/tools.git
   - sudo make -C tools install
   - setup_apt
@@ -25,3 +33,9 @@ script: CFLAGS=-Werror pg_travis_multi_test check
 after_success:
   - sync_to_enterprise
   - bash <(curl -s https://codecov.io/bash)
+# notify whole team if nightly merge build fails
+notifications:
+  email:
+    recipients: [ dev@citusdata.com ]
+    on_success: never
+    on_failure: always
