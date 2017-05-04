@@ -25,6 +25,7 @@
 #include "access/xact.h"
 #include "catalog/namespace.h"
 #include "commands/dbcommands.h"
+#include "distributed/colocation_utils.h"
 #include "distributed/connection_management.h"
 #include "distributed/master_protocol.h"
 #include "distributed/metadata_sync.h"
@@ -50,6 +51,7 @@
 #include "optimizer/clauses.h"
 #include "optimizer/predtest.h"
 #include "optimizer/restrictinfo.h"
+#include "storage/lmgr.h"
 #include "storage/lock.h"
 #include "tcop/tcopprot.h"
 #include "utils/array.h"
@@ -57,6 +59,7 @@
 #include "utils/elog.h"
 #include "utils/errcodes.h"
 #include "utils/lsyscache.h"
+#include "utils/syscache.h"
 
 
 /* Local functions forward declarations */
@@ -206,6 +209,8 @@ master_drop_all_shards(PG_FUNCTION_ARGS)
 
 	List *shardIntervalList = NIL;
 	int droppedShardCount = 0;
+	HeapTuple heapTuple = NULL;
+
 
 	char *schemaName = text_to_cstring(schemaNameText);
 	char *relationName = text_to_cstring(relationNameText);
@@ -214,9 +219,35 @@ master_drop_all_shards(PG_FUNCTION_ARGS)
 
 	CheckTableSchemaNameForDrop(relationId, &schemaName, &relationName);
 
+	/*
+	 * master_drop_all_shards is typically called from the DROP TABLE trigger,
+	 * but could be called by a user directly. Make sure we have an
+	 * AccessExlusiveLock to prevent any other commands from running on this table
+	 * concurrently.
+	 */
+	LockRelationOid(relationId, AccessExclusiveLock);
+
 	shardIntervalList = LoadShardIntervalList(relationId);
 	droppedShardCount = DropShards(relationId, schemaName, relationName,
 								   shardIntervalList);
+
+	/*
+	 * The table no longer belongs to a colocation group when all shards
+	 * are dropped. We also delete the colocation group if no tables left
+	 * in the group.
+	 *
+	 * This function also gets called from drop trigger therefore it is
+	 * necessary to check if the relation still exists.
+	 */
+	heapTuple = SearchSysCache1(RELOID, ObjectIdGetDatum(relationId));
+
+	if (HeapTupleIsValid(heapTuple))
+	{
+		Oid colocationId = TableColocationId(relationId);
+		UpdateRelationColocationGroup(relationId, InvalidOid);
+		DeleteColocationGroupIfNoTablesBelong(colocationId);
+		ReleaseSysCache(heapTuple);
+	}
 
 	PG_RETURN_INT32(droppedShardCount);
 }

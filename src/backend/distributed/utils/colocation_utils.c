@@ -44,7 +44,6 @@ static bool HashPartitionedShardIntervalsEqual(ShardInterval *leftShardInterval,
 											   ShardInterval *rightShardInterval);
 static int CompareShardPlacementsByNode(const void *leftElement,
 										const void *rightElement);
-static void UpdateRelationColocationGroup(Oid distributedRelationId, uint32 colocationId);
 static List * ColocationGroupTableList(Oid colocationId);
 static void DeleteColocationGroup(uint32 colocationId);
 
@@ -605,7 +604,7 @@ CheckDistributionColumnType(Oid sourceRelationId, Oid targetRelationId)
  * UpdateRelationColocationGroup updates colocation group in pg_dist_partition
  * for the given relation.
  */
-static void
+void
 UpdateRelationColocationGroup(Oid distributedRelationId, uint32 colocationId)
 {
 	Relation pgDistPartition = NULL;
