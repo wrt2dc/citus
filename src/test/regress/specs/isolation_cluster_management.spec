@@ -1,8 +1,13 @@
 session "s1"
 step "s1a"
 {
-    SELECT master_add_node('localhost', 57637);
-    SELECT master_add_node('localhost', 57638);
+    SELECT 1 FROM master_add_node('localhost', 57637);
+    SELECT 1 FROM master_add_node('localhost', 57638);
 }
 
-permutation "s1a"
+step "s1b"
+{
+	SELECT nodename, nodeport FROM pg_dist_node ORDER BY nodename, nodeport;
+}
+
+permutation "s1a" "s1b"
