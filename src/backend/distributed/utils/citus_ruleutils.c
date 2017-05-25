@@ -267,6 +267,33 @@ pg_get_sequencedef(Oid sequenceRelationId)
 }
 
 
+
+#include "catalog/partition.h"
+
+static char *
+PartitionStrategy(Oid relationId)
+{
+	Relation rel = heap_open(relationId, AccessShareLock);
+	PartitionKey key = RelationGetPartitionKey(rel);
+	heap_close(rel, AccessShareLock);
+
+	if (key->strategy == PARTITION_STRATEGY_RANGE)
+	{
+		return "RANGE";
+	}
+	else if (key->strategy == PARTITION_STRATEGY_RANGE)
+	{
+		return "LIST";
+	}
+
+	heap_close(rel, AccessShareLock);
+
+	return "";
+}
+
+/* move function declarations to a better place */
+#include "distributed/master_metadata_utility.h"
+
 /*
  * pg_get_tableschemadef_string returns the definition of a given table. This
  * definition includes table's schema, default column values, not null and check
@@ -302,16 +329,31 @@ pg_get_tableschemadef_string(Oid tableRelationId, bool includeSequenceDefaults)
 	relationName = generate_relation_name(tableRelationId, NIL);
 
 	relationKind = relation->rd_rel->relkind;
-	if (relationKind != RELKIND_RELATION && relationKind != RELKIND_FOREIGN_TABLE)
+	if (!(relationKind == RELKIND_RELATION || relationKind == RELKIND_FOREIGN_TABLE ||
+		relationKind == RELKIND_PARTITIONED_TABLE))
 	{
 		ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
 						errmsg("%s is not a regular or foreign table", relationName)));
 	}
 
 	initStringInfo(&buffer);
-	if (relationKind == RELKIND_RELATION)
+	if (relationKind == RELKIND_RELATION || relationKind == RELKIND_PARTITIONED_TABLE)
 	{
 		appendStringInfo(&buffer, "CREATE TABLE %s (", relationName);
+	}
+	else if (IsPartitionedChildTable(tableRelationId))
+	{
+
+		Oid parentOid = get_partition_parent(tableRelationId);
+		char *lowerBound = NULL;
+		char *upperBound = NULL;
+
+
+		appendStringInfo(&buffer, "CREATE TABLE %s PARTITION OF %s FOR VALUES FROM %s TO %s",
+						 relationName,
+						 get_rel_name(parentOid),
+						 lowerBound,
+						 upperBound);
 	}
 	else
 	{
@@ -330,7 +372,7 @@ pg_get_tableschemadef_string(Oid tableRelationId, bool includeSequenceDefaults)
 	{
 		Form_pg_attribute attributeForm = tupleDescriptor->attrs[attributeIndex];
 
-		if (!attributeForm->attisdropped && attributeForm->attinhcount == 0)
+		if (!attributeForm->attisdropped)
 		{
 			const char *attributeName = NULL;
 			const char *attributeTypeName = NULL;
@@ -452,11 +494,106 @@ pg_get_tableschemadef_string(Oid tableRelationId, bool includeSequenceDefaults)
 		appendStringInfo(&buffer, " SERVER %s", quote_identifier(serverName));
 		AppendOptionListToString(&buffer, foreignTable->options);
 	}
+	else if (relationKind == RELKIND_PARTITIONED_TABLE)
+	{
+		PartitionKey key = RelationGetPartitionKey(relation);
+		char *partitionKeyName = NULL;
+		int attributeCount = get_partition_natts(key);
+
+		if (attributeCount != 1)
+		{
+			elog(ERROR, "Only single attribute deparsing is implemented yet");
+		}
+
+		partitionKeyName = get_relid_attribute_name(tableRelationId, key->partattrs[0]);
+		appendStringInfo(&buffer, " PARTITION BY %s (%s)", PartitionStrategy(tableRelationId),
+						 partitionKeyName);
+	}
+
 
 	relation_close(relation, AccessShareLock);
 
 	return (buffer.data);
 }
+
+
+
+/* try to unify this with pg_get_tableschemadef_string */
+char *
+pg_get_partitionschemadef_string(Oid tableRelationId, bool includeSequenceDefaults)
+{
+	Relation relation = NULL;
+	char *relationName = NULL;
+	char relationKind = 0;
+	StringInfoData buffer = { NULL, 0, 0, 0 };
+
+	Oid parentOid = InvalidOid;
+	char *partitionBound = NULL;
+
+	/*
+	 * Instead of retrieving values from system catalogs as other functions in
+	 * ruleutils.c do, we follow an unusual approach here: we open the relation,
+	 * and fetch the relation's tuple descriptor. We do this because the tuple
+	 * descriptor already contains information harnessed from pg_attrdef,
+	 * pg_attribute, pg_constraint, and pg_class; and therefore using the
+	 * descriptor saves us from a lot of additional work.
+	 */
+	relation = relation_open(tableRelationId, AccessShareLock);
+	relationName = generate_relation_name(tableRelationId, NIL);
+
+	relationKind = relation->rd_rel->relkind;
+	if (!IsPartitionedChildTable(tableRelationId))
+	{
+		ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+						errmsg("%s is not a partition", relationName)));
+	}
+
+	initStringInfo(&buffer);
+
+
+	parentOid = get_partition_parent(tableRelationId);
+	partitionBound = deparse_partition_bound(tableRelationId);
+
+	appendStringInfo(&buffer, "CREATE TABLE %s PARTITION OF %s %s",
+					 relationName,
+					 get_rel_name(parentOid),
+					 partitionBound);
+
+	relation_close(relation, AccessShareLock);
+
+	return (buffer.data);
+}
+
+
+char *
+deparse_partition_bound(Oid childOid)
+{
+
+	Relation rel = heap_open(childOid, AccessShareLock);
+
+	 HeapTuple   tuple;
+	 Datum       boundDatum;
+	 bool        isnull;
+	 char *defaultString = NULL;
+
+	  tuple = SearchSysCache1(RELOID, RelationGetRelid(rel));
+	  boundDatum = SysCacheGetAttr(RELOID, tuple,
+	                                Anum_pg_class_relpartbound,
+	                                &isnull);
+	   if (isnull)                 /* should not happen */
+	       elog(ERROR, "relation \"%s\" has relpartbound = null",
+	            RelationGetRelationName(rel));
+		/* deparse default value string */
+	   defaultString = deparse_expression(stringToNode(TextDatumGetCString(boundDatum)),  deparse_context_for(get_rel_name(childOid), childOid),
+										   false, false);
+	   ReleaseSysCache(tuple);
+
+	   heap_close(rel, AccessShareLock);
+
+	   return defaultString;
+
+}
+
 
 
 /*
@@ -487,7 +624,8 @@ pg_get_tablecolumnoptionsdef_string(Oid tableRelationId)
 	relationName = generate_relation_name(tableRelationId, NIL);
 
 	relationKind = relation->rd_rel->relkind;
-	if (relationKind != RELKIND_RELATION && relationKind != RELKIND_FOREIGN_TABLE)
+	if (!(relationKind == RELKIND_RELATION || relationKind == RELKIND_FOREIGN_TABLE ||
+		relationKind == RELKIND_PARTITIONED_TABLE))
 	{
 		ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
 						errmsg("%s is not a regular or foreign table", relationName)));

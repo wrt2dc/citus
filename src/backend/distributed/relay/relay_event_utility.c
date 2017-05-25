@@ -462,6 +462,25 @@ RelayEventExtendNamesForInterShardCommands(Node *parseTree, uint64 leftShardId,
 			break;
 		}
 
+		case T_CreateStmt:
+		{
+			CreateStmt *createStatement = (CreateStmt *) parseTree;
+
+			List *inhRelations = createStatement->inhRelations;
+
+			RangeVar *inheretedRelation = list_nth(inhRelations, 0);
+			char **parentTableName = &(inheretedRelation->relname);
+
+			AppendShardIdToName(parentTableName, rightShardId);
+
+
+			/* drop into RelayEventExtendNames for non-inter table commands */
+			RelayEventExtendNames(parseTree, leftShardSchemaName, leftShardId);
+			break;
+		}
+
+
+
 		default:
 		{
 			ereport(WARNING, (errmsg("unsafe statement type in name extension"),

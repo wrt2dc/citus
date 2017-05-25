@@ -218,11 +218,13 @@ CreateShardsWithRoundRobinPolicy(Oid distributedTableId, int32 shardCount,
 		 */
 		LockShardDistributionMetadata(shardId, ExclusiveLock);
 
-		CreateShardPlacements(distributedTableId, shardId, ddlCommandList, relationOwner,
-							  workerNodeList, roundRobinNodeIndex, replicationFactor);
 
 		InsertShardRow(distributedTableId, shardId, shardStorageType,
 					   minHashTokenText, maxHashTokenText);
+
+		CreateShardPlacements(distributedTableId, shardId, ddlCommandList, relationOwner,
+							  workerNodeList, roundRobinNodeIndex, replicationFactor);
+
 	}
 
 	if (QueryCancelPending)
@@ -310,6 +312,10 @@ CreateColocatedShards(Oid targetRelationId, Oid sourceRelationId)
 			char *sourceNodeName = sourcePlacement->nodeName;
 			int32 sourceNodePort = sourcePlacement->nodePort;
 
+			/* one more hack move */
+			InsertShardRow(targetRelationId, newShardId, targetShardStorageType,
+						   shardMinValueText, shardMaxValueText);
+
 			bool created = WorkerCreateShard(targetRelationId, sourceNodeName,
 											 sourceNodePort, sourceShardIndex, newShardId,
 											 targetTableRelationOwner,
@@ -333,8 +339,7 @@ CreateColocatedShards(Oid targetRelationId, Oid sourceRelationId)
 			}
 		}
 
-		InsertShardRow(targetRelationId, newShardId, targetShardStorageType,
-					   shardMinValueText, shardMaxValueText);
+
 	}
 }
 

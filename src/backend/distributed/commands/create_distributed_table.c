@@ -85,6 +85,7 @@ static Oid ColumnType(Oid relationId, char *columnName);
 static void CopyLocalDataIntoShards(Oid relationId);
 static List * TupleDescColumnNameList(TupleDesc tupleDescriptor);
 
+
 /* exports for SQL callable functions */
 PG_FUNCTION_INFO_V1(master_create_distributed_table);
 PG_FUNCTION_INFO_V1(create_distributed_table);
@@ -148,6 +149,17 @@ create_distributed_table(PG_FUNCTION_ARGS)
 
 	EnsureCoordinator();
 
+	PrintInformation(relationId);
+
+	if (IsPartitionedChildTable(relationId))
+	{
+		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg("cannot distribute relation"),
+						errdetail("%s is a child of %s and distributing child tables is "
+								  "not supported", get_rel_name(relationId),
+								  get_rel_name(get_partition_parent(relationId)))));
+	}
+
 	/* guard against a binary update without a function update */
 	if (PG_NARGS() >= 4)
 	{
@@ -191,6 +203,7 @@ create_distributed_table(PG_FUNCTION_ARGS)
 		ConvertToDistributedTable(relationId, distributionColumnName,
 								  distributionMethod, REPLICATION_MODEL_COORDINATOR,
 								  INVALID_COLOCATION_ID, requireEmpty);
+
 		PG_RETURN_VOID();
 	}
 
@@ -206,6 +219,93 @@ create_distributed_table(PG_FUNCTION_ARGS)
 
 	PG_RETURN_VOID();
 }
+
+
+#include "utils/ruleutils.h"
+void
+PrintInformation(Oid relationId)
+{
+	if (IsPartitionedChildTable(relationId))
+	{
+		elog(DEBUG1, "%s is a child of %s", get_rel_name(relationId),
+			 get_rel_name(get_partition_parent(relationId)));
+	}
+	else if (IsPartitionedParentTable(relationId))
+	{
+		List *childList = ChildrenPartitionList(relationId);
+
+		ListCell *childOidCell = NULL;
+
+		elog(DEBUG1, "%s is a parent and it has %d children", get_rel_name(relationId),
+			 list_length(childList));
+
+		foreach(childOidCell, childList)
+		{
+			Oid childOid = lfirst_oid(childOidCell);
+			elog(DEBUG1, "\tChild name: %s", get_rel_name(childOid));
+
+		}
+	}
+	else
+	{
+		elog(DEBUG1, "not a partitioned parent/child");
+	}
+}
+
+
+/*
+ * Returns true if the given relation is a partition table.
+ */
+bool
+IsPartitionedChildTable(Oid relationId)
+{
+	Relation rel = heap_open(relationId, AccessShareLock);
+	bool relIsPartition = rel->rd_rel->relispartition;
+
+
+	heap_close(rel, NoLock);
+
+	return relIsPartition;
+}
+
+
+bool
+IsPartitionedParentTable(Oid relationId)
+{
+	Relation rel = heap_open(relationId, AccessShareLock);
+	char relKind = rel->rd_rel->relkind;
+
+	heap_close(rel, NoLock);
+
+	return relKind == RELKIND_PARTITIONED_TABLE;
+}
+
+
+List *
+ChildrenPartitionList(Oid parentRelationId)
+{
+	Relation rel = heap_open(parentRelationId, AccessShareLock);
+	List *childList = NIL;
+	int i = 0;
+
+	if (rel->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
+	{
+		return childList;
+	}
+
+	Assert(rel->rd_partdesc != NULL);
+	int oidCount = rel->rd_partdesc->nparts;
+
+	for (i = 0; i < oidCount; ++i)
+	{
+		childList = lappend_oid(childList, rel->rd_partdesc->oids[i]);
+	}
+
+	heap_close(rel, NoLock);
+
+	return childList;
+}
+
 
 
 /*
@@ -334,13 +434,14 @@ ConvertToDistributedTable(Oid relationId, char *distributionColumnName,
 
 	/* verify target relation is either regular or foreign table */
 	relationKind = relation->rd_rel->relkind;
-	if (relationKind != RELKIND_RELATION && relationKind != RELKIND_FOREIGN_TABLE)
+	if (relationKind != RELKIND_RELATION && relationKind != RELKIND_FOREIGN_TABLE &&
+		relationKind != RELKIND_PARTITIONED_TABLE)
 	{
 		ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
 						errmsg("cannot distribute relation: %s",
 							   relationName),
-						errdetail("Distributed relations must be regular or "
-								  "foreign tables.")));
+						errdetail("Distributed relations must be regular, partitioned "
+								  "or foreign tables.")));
 	}
 
 	/* check that table is empty if that is required */
@@ -640,7 +741,7 @@ CreateHashDistributedTable(Oid relationId, char *distributionColumnName,
 
 	/* relax empty table requirement for regular (non-foreign) tables */
 	relationKind = get_rel_relkind(relationId);
-	if (relationKind == RELKIND_RELATION)
+	if (relationKind == RELKIND_RELATION || relationKind == RELKIND_PARTITIONED_TABLE)
 	{
 		requireEmpty = false;
 	}

@@ -74,6 +74,7 @@ int ShardPlacementPolicy = SHARD_PLACEMENT_ROUND_ROBIN;
 
 static Datum WorkerNodeGetDatum(WorkerNode *workerNode, TupleDesc tupleDescriptor);
 
+static List * GetPartitionCreationCommands(Oid relationId, bool includeSquenceDefaults);
 
 /* exports for SQL callable functions */
 PG_FUNCTION_INFO_V1(master_get_table_metadata);
@@ -452,7 +453,6 @@ ResolveRelationId(text *relationName)
 	return relationId;
 }
 
-
 /*
  * GetTableDDLEvents takes in a relationId, includeSequenceDefaults flag,
  * and returns the list of DDL commands needed to reconstruct the relation.
@@ -468,15 +468,53 @@ GetTableDDLEvents(Oid relationId, bool includeSequenceDefaults)
 	List *tableDDLEventList = NIL;
 	List *tableCreationCommandList = NIL;
 	List *indexAndConstraintCommandList = NIL;
+	List *partitionCreationEvents = NIL;
 
 	tableCreationCommandList = GetTableCreationCommands(relationId,
 														includeSequenceDefaults);
 	tableDDLEventList = list_concat(tableDDLEventList, tableCreationCommandList);
 
+	if (IsPartitionedParentTable(relationId))
+	{
+
+		partitionCreationEvents = GetPartitionCreationCommands(relationId,
+														   includeSequenceDefaults);
+		tableDDLEventList = list_concat(tableDDLEventList, partitionCreationEvents);
+
+	}
+
 	indexAndConstraintCommandList = GetTableIndexAndConstraintCommands(relationId);
 	tableDDLEventList = list_concat(tableDDLEventList, indexAndConstraintCommandList);
 
+
+
 	return tableDDLEventList;
+}
+
+static List *
+GetPartitionCreationCommands(Oid relationId, bool includeSquenceDefaults)
+{
+	List *eventList = NIL;
+	List *childOidList = NIL;
+	ListCell *childOidListCell = NULL;
+
+
+	if (!IsPartitionedParentTable(relationId))
+	{
+		return eventList;
+	}
+
+	childOidList = ChildrenPartitionList(relationId);
+	foreach(childOidListCell, childOidList)
+	{
+		Oid childOid = lfirst_oid(childOidListCell);
+
+		char *childDDLEvent = pg_get_partitionschemadef_string(childOid, includeSquenceDefaults);
+
+		eventList = list_concat(eventList, list_make1(childDDLEvent));
+	}
+
+	return eventList;
 }
 
 
@@ -730,7 +768,7 @@ ShardStorageType(Oid relationId)
 	char shardStorageType = 0;
 
 	char relationType = get_rel_relkind(relationId);
-	if (relationType == RELKIND_RELATION)
+	if (relationType == RELKIND_RELATION || relationType == RELKIND_PARTITIONED_TABLE)
 	{
 		shardStorageType = SHARD_STORAGE_TABLE;
 	}

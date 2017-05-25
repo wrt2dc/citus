@@ -118,6 +118,7 @@ extern bool WorkerCreateShard(Oid relationId, char *nodeName, uint32 nodePort,
 							  int shardIndex, uint64 shardId, char *newShardOwner,
 							  List *ddlCommandList, List *foreignConstraintCommadList);
 extern Oid ForeignConstraintGetReferencedTableId(char *queryString);
+extern Oid PartitionCreateTablePartitionOid(char *queryString);
 extern void CheckHashPartitionedTable(Oid distributedTableId);
 extern void CheckTableSchemaNameForDrop(Oid relationId, char **schemaName,
 										char **tableName);

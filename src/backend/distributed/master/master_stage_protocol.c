@@ -179,11 +179,11 @@ master_create_empty_shard(PG_FUNCTION_ARGS)
 		candidateNodeList = lappend(candidateNodeList, candidateNode);
 		candidateNodeIndex++;
 	}
+	InsertShardRow(relationId, shardId, storageType, nullMinValue, nullMaxValue);
 
 	CreateShardPlacements(relationId, shardId, ddlEventList, relationOwner,
 						  candidateNodeList, 0, ShardReplicationFactor);
 
-	InsertShardRow(relationId, shardId, storageType, nullMinValue, nullMaxValue);
 
 	PG_RETURN_INT64(shardId);
 }
@@ -441,18 +441,63 @@ WorkerCreateShard(Oid relationId, char *nodeName, uint32 nodePort,
 		List *queryResultList = NIL;
 		StringInfo applyDDLCommand = makeStringInfo();
 
-		if (strcmp(schemaName, "public") != 0)
+		Oid partitionOid = PartitionCreateTablePartitionOid(ddlCommand);
+
+		if (partitionOid != InvalidOid)
 		{
-			appendStringInfo(applyDDLCommand, WORKER_APPLY_SHARD_DDL_COMMAND, shardId,
-							 escapedSchemaName, escapedDDLCommand);
+			uint64 newShardId = GetNextShardId();
+
+			/* this is extremenly wrong and hacky */
+			ShardInterval *sourceShardInterval = LoadShardInterval(shardId);
+
+			int32 shardMinValue = DatumGetInt32(sourceShardInterval->minValue);
+			int32 shardMaxValue = DatumGetInt32(sourceShardInterval->maxValue);
+			text *shardMinValueText = IntegerToText(shardMinValue);
+			text *shardMaxValueText = IntegerToText(shardMaxValue);
+
+			const RelayFileState shardState = FILE_FINALIZED;
+			const uint64 shardSize = 0;
+
+			InsertShardRow(partitionOid, newShardId, ShardStorageType(relationId),
+						shardMinValueText, shardMaxValueText);
+			InsertShardPlacementRow(newShardId, INVALID_PLACEMENT_ID, shardState, shardSize, nodeName, nodePort);
+
+			appendStringInfo(applyDDLCommand,
+							 WORKER_APPLY_INTER_SHARD_DDL_COMMAND, newShardId, escapedSchemaName,
+							 shardId, "'public'", escapedDDLCommand);
+
 		}
 		else
 		{
-			appendStringInfo(applyDDLCommand,
-							 WORKER_APPLY_SHARD_DDL_COMMAND_WITHOUT_SCHEMA, shardId,
-							 escapedDDLCommand);
-		}
 
+			if (strcmp(schemaName, "public") != 0)
+			{
+				appendStringInfo(applyDDLCommand, WORKER_APPLY_SHARD_DDL_COMMAND, shardId,
+								 escapedSchemaName, escapedDDLCommand);
+			}
+			else
+			{
+				appendStringInfo(applyDDLCommand,
+								 WORKER_APPLY_SHARD_DDL_COMMAND_WITHOUT_SCHEMA, shardId,
+								 escapedDDLCommand);
+			}
+
+			/* this is extremely wrong and hacky */
+			List *childrenList = ChildrenPartitionList(relationId);
+			ListCell *childOidCell = NULL;
+
+			foreach(childOidCell, childrenList)
+			{
+				Oid childOid = lfirst_oid(childOidCell);
+				DistTableCacheEntry *parentTable = DistributedTableCacheEntry(relationId);
+
+				if (!IsDistributedTable(childOid))
+					InsertIntoPgDistPartition(childOid, DISTRIBUTE_BY_HASH,
+											  stringToNode(parentTable->partitionKeyString),
+											  parentTable->colocationId, parentTable->replicationModel);
+			}
+
+		}
 		queryResultList = ExecuteRemoteQuery(nodeName, nodePort, newShardOwner,
 											 applyDDLCommand);
 		if (queryResultList == NIL)
@@ -759,3 +804,26 @@ ForeignConstraintGetReferencedTableId(char *queryString)
 
 	return InvalidOid;
 }
+
+
+Oid PartitionCreateTablePartitionOid(char *queryString)
+{
+	Node *queryNode = ParseTreeNode(queryString);
+
+	if (!IsA(queryNode, CreateStmt))
+		return InvalidOid;
+
+	CreateStmt *createStatement = (CreateStmt *) queryNode;
+
+	Oid relOid = get_relname_relid(createStatement->relation->relname,
+								   get_namespace_oid("public", false));
+
+
+	if (createStatement->partbound != NULL)
+	{
+		return relOid;
+	}
+
+	return InvalidOid;
+}
+

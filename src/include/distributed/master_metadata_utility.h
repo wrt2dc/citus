@@ -98,6 +98,13 @@ extern void UpdateColocationGroupReplicationFactor(uint32 colocationId,
 												   int replicationFactor);
 extern void CreateTruncateTrigger(Oid relationId);
 
+
+void PrintInformation(Oid relationId);
+bool IsPartitionedChildTable(Oid relationId);
+bool IsPartitionedParentTable(Oid relationId);
+List * ChildrenPartitionList(Oid parentRelationId);
+
+
 /* Remaining metadata utility functions  */
 extern char * TableOwner(Oid relationId);
 extern void EnsureTablePermissions(Oid relationId, AclMode mode);
