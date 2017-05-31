@@ -185,12 +185,12 @@ INSERT INTO labs VALUES (6, 'Bell Labs');
 ERROR:  single-shard DML commands must not appear in transaction blocks which contain multi-shard data modifications
 COMMIT;
 -- but the DDL should correctly roll back
-\d labs
-     Table "public.labs"
+SELECT "Column", "Type", "Modifiers" FROM table_desc WHERE relid='public.labs'::regclass;
  Column |  Type  | Modifiers 
 --------+--------+-----------
  id     | bigint | not null
  name   | text   | not null
+(2 rows)
 
 SELECT * FROM labs WHERE id = 6;
  id | name 
@@ -377,12 +377,12 @@ ERROR:  distributed copy operations must not appear in transaction blocks contai
 CONTEXT:  COPY labs, line 1: "12,fsociety,lol"
 COMMIT;
 -- but the DDL should correctly roll back
-\d labs
-     Table "public.labs"
+SELECT "Column", "Type", "Modifiers" FROM table_desc WHERE relid='public.labs'::regclass;
  Column |  Type  | Modifiers 
 --------+--------+-----------
  id     | bigint | not null
  name   | text   | not null
+(2 rows)
 
 -- and if the copy is before the ALTER...
 BEGIN;
@@ -391,12 +391,12 @@ ALTER TABLE labs ADD COLUMN motto text;
 ERROR:  distributed DDL commands must not appear within transaction blocks containing single-shard data modifications
 COMMIT;
 -- the DDL fails, but copy persists
-\d labs
-     Table "public.labs"
+SELECT "Column", "Type", "Modifiers" FROM table_desc WHERE relid='public.labs'::regclass;
  Column |  Type  | Modifiers 
 --------+--------+-----------
  id     | bigint | not null
  name   | text   | not null
+(2 rows)
 
 SELECT * FROM labs WHERE id = 12;
  id |   name   

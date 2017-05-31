@@ -151,7 +151,7 @@ INSERT INTO labs VALUES (6, 'Bell Labs');
 COMMIT;
 
 -- but the DDL should correctly roll back
-\d labs
+SELECT "Column", "Type", "Modifiers" FROM table_desc WHERE relid='public.labs'::regclass;
 SELECT * FROM labs WHERE id = 6;
 
 -- COPY can happen after single row INSERT
@@ -278,7 +278,7 @@ ALTER TABLE labs ADD COLUMN motto text;
 COMMIT;
 
 -- but the DDL should correctly roll back
-\d labs
+SELECT "Column", "Type", "Modifiers" FROM table_desc WHERE relid='public.labs'::regclass;
 
 -- and if the copy is before the ALTER...
 BEGIN;
@@ -289,7 +289,7 @@ ALTER TABLE labs ADD COLUMN motto text;
 COMMIT;
 
 -- the DDL fails, but copy persists
-\d labs
+SELECT "Column", "Type", "Modifiers" FROM table_desc WHERE relid='public.labs'::regclass;
 SELECT * FROM labs WHERE id = 12;
 
 -- multi-shard operations can co-exist with DDL in a transactional way
