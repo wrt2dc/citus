@@ -240,7 +240,6 @@ INSERT INTO data_load_test VALUES (132, 'hello');
 SELECT create_distributed_table('data_load_test', 'col1');
 CREATE INDEX data_load_test_idx ON data_load_test (col2);
 END;
-DROP TABLE data_load_test;
 
 -- popping in and out of existence in the same transaction works
 BEGIN;

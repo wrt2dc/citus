@@ -431,6 +431,9 @@ WHERE col1 = 132;
 (1 row)
 
 DROP TABLE data_load_test1, data_load_test2;
+ERROR:  shard drop operations must not appear in transaction blocks containing other distributed modifications
+CONTEXT:  SQL statement "SELECT master_drop_all_shards(v_obj.objid, v_obj.schema_name, v_obj.object_name)"
+PL/pgSQL function citus_drop_trigger() line 21 at PERFORM
 END;
 -- creating an index after loading data works
 BEGIN;
@@ -444,8 +447,8 @@ NOTICE:  Copying data from local table...
 (1 row)
 
 CREATE INDEX data_load_test_idx ON data_load_test (col2);
+ERROR:  distributed DDL commands must not appear within transaction blocks containing single-shard data modifications
 END;
-DROP TABLE data_load_test;
 -- popping in and out of existence in the same transaction works
 BEGIN;
 CREATE TABLE data_load_test (col1 int, col2 text, col3 serial);
@@ -458,6 +461,9 @@ NOTICE:  Copying data from local table...
 (1 row)
 
 DROP TABLE data_load_test;
+ERROR:  shard drop operations must not appear in transaction blocks containing other distributed modifications
+CONTEXT:  SQL statement "SELECT master_drop_all_shards(v_obj.objid, v_obj.schema_name, v_obj.object_name)"
+PL/pgSQL function citus_drop_trigger() line 21 at PERFORM
 END;
 -- but dropping after a write on the distributed table is currently disallowed
 BEGIN;
